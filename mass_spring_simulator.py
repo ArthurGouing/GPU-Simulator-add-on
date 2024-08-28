@@ -4,13 +4,13 @@ import bpy
 
 @ti.data_oriented
 class ExplicitMassSpringSimulator():
-    def __init__(self) -> None:
+    def __init__(self, arch) -> None:
         # Architecture Computation
         self.name = "Explicit Mass Spring"
-        self._arch = ti.vulkan if ti._lib.core.with_vulkan() else ti.cuda
+        self.arch = arch # ti.vulkan if ti._lib.core.with_vulkan() else ti.cuda
 
         # Simulation Parameters 
-        self._dt = 0.04
+        self._dt = 0.0004
         self._fps = 24
         self._substeps = int(1 / self._fps // self._dt) # Do fake automatated updated attribute
         self.curr_time =  0
@@ -23,68 +23,69 @@ class ExplicitMassSpringSimulator():
         self.bending_springs = True
         self.isnot_init = True
 
+        self.print_parameter()
 
+    def print_parameter(self):
         # Print Simulation Informations
         print("")
         print("  Simulating with Mass spring method")
         print("")
         print("--Simulation parameters-----------------------")
         print(f" {'dt':<10}: {self._dt}")
+        print(f" {'fps':<10}: {self._fps}")
         print(f" {'substeps':<10}: {self._substeps}")
         print("")
         print(f" {'gravity':<10}: {self.gravity}")
         print(f" {'rigidity':<10}: {self.spring_rigidity}")
         print(f" {'damping':<10}: {self.spring_damping}")
-        print(f" {'drag':<10}: {self.drag_damping}")
+        print(f" {'drag':<10}: {self.air_drag}")
         print("------------------------------------------------------")
 
-        # self.ball_radius = 0.3
-        # self.ball_center = ti.Vector.field(3, dtype=float, shape=(1,))
-        # self.ball_center[0] = [0, 0, 0]
+    @property
+    def arch(self):
+        if self._arch==ti.cpu:
+            return "Cpu"
+        elif self._arch==ti.vulkan:
+            return "GPU Vulkan"
+        elif self._arch==ti.metal:
+            return "GPU Metal"
+        elif self._arch==ti.cuda:
+            return "GPU Cuda"
+        else:
+            return self._arch
+    @arch.setter
+    def arch(self, arch_str):
+        """ apparamment amdgpu, dx12, opengl, gles, existent aussi ..."""
+        if arch_str=='GPU':
+            self._arch = ti.gpu
+        elif arch_str=='CPU':
+            self._arch = ti.cpu
+        elif arch_str=='VULKAN':
+            self._arch = ti.vulkan
+        elif arch_str=='METAL':
+            self._arch = ti.metal
+        elif arch_str=='CUDA':
+            self._arch = ti.cuda
+        else:
+            print("ERROR: this arch doesn't exist")
 
-        @property
-        def arch(self):
-            if self._arch==ti.cpu:
-                return "Cpu"
-            elif self._arch==ti.vulkan:
-                return "GPU Vulkan"
-            elif self._arch==ti.metal:
-                return "GPU Metal"
-            elif self._arch==ti.cuda:
-                return "GPU Cuda"
-            else:
-                return self._arch
-        @arch.setter
-        def arch(self, arch_str):
-            """ apparamment amdgpu, dx12, opengl, gles, existent aussi ..."""
-            if arch_str=='GPU':
-                self._arch = ti.gpu
-            elif arch_str=='CPU':
-                self._arch = ti.cpu
-            elif arch_str=='VULKAN':
-                self._arch = ti.vulkan
-            elif arch_str=='METAL':
-                self._arch = ti.metal
-            elif arch_str=='CUDA':
-                self._arch = ti.cuda
-            else:
-                print("ERROR: this arch doesn't exist")
+    @property
+    def dt(self):
+        return self._dt
+    @dt.setter
+    def dt(self, new_dt):
+        self._dt = new_dt
+        self._substeps = int(1 / self._fps // self._dt)
+        print("substeps=", self._substeps)
 
-        @property
-        def dt(self):
-            return self._dt
-        @dt.setter
-        def dt(self, new_dt):
-            self._dt = new_dt
-            self._substeps = int(1 / self._fps // self._dt)
-
-        @property
-        def fps(self):
-            return self._fps
-        @fps.setter
-        def fps(self, new_fps: int):
-            self._fps = new_fps
-            self._substeps = int(1 / self._fps // self._dt)
+    @property
+    def fps(self):
+        return self._fps
+    @fps.setter
+    def fps(self, new_fps):
+        self._fps = new_fps
+        self._substeps = int(1 / self._fps // self._dt)
+        print("substeps=", self._substeps)
 
     def initialize_from_obj(self, obj: bpy.types.Object):
         # Create Device fields
@@ -198,6 +199,17 @@ class ExplicitMassSpringSimulator():
             all_l0.append(l0_list)
         self.l0.from_numpy(np.array(all_l0))
 
+    def reset(self):
+        self.x.from_numpy(self.points)
+        self.initialize_velocity()
+
+    def update_vertices(self, obj: bpy.types.Object):
+        import array
+        vert = obj.data.vertices
+        points_array = self.x.to_numpy().ravel().tolist()
+        seq = array.array('f', points_array)
+        vert.foreach_set('co', seq)
+        obj.data.update()
     def frame_forward(self):
         for t in range(self._substeps):
             self.step_forward()
@@ -228,7 +240,7 @@ class ExplicitMassSpringSimulator():
                 force += self.spring_rigidity * (l-l0[j]) * dir
                 # print("point:", i, "neighbor:", j, "xi=", x, "xj=", self.x[spring_id], "neighb_id", spring_id)
             v += force * self._dt
-            v *= ti.exp(-self.drag_damping * self._dt)
+            v *= ti.exp(-self.air_drag * self._dt)
 
             # # Surfacic Forces
             # distance_to_sphere_center = x - ti.Vector([0.0, 0.0, 0.0])
@@ -244,15 +256,3 @@ class ExplicitMassSpringSimulator():
                 self.x[i] = x
                 self.v[i] = v
 
-    def update_vertices(self, obj: bpy.types.Object):
-        import array
-        vert = obj.data.vertices
-        points_array = self.x.to_numpy().ravel().tolist()
-        seq = array.array('f', points_array)
-        vert.foreach_set('co', seq)
-        print(self.x[2])
-        obj.data.update()
-
-    def reset(self):
-        self.x.from_numpy(self.points)
-        self.initialize_velocity()
