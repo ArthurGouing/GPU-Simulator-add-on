@@ -3,24 +3,22 @@ import numpy as np
 import bpy
 
 @ti.data_oriented
-class MassSpringSimulator():
-    def __init__(self, **kwargs) -> None:
+class ExplicitMassSpringSimulator():
+    def __init__(self) -> None:
         # Architecture Computation
-        if "arch" not in kwargs:
-            self.arch = ti.vulkan if ti._lib.core.with_vulkan() else ti.cuda
-            kwargs.update({"arch": self.arch})
-        ti.init(**kwargs)
+        self.name = "Explicit Mass Spring"
+        self._arch = ti.vulkan if ti._lib.core.with_vulkan() else ti.cuda
 
         # Simulation Parameters 
-        self.dt = 0.0003
-        self.fps = 24
-        self.substeps = int(1 / self.fps // self.dt) # Do fake automatated updated attribute
+        self._dt = 0.04
+        self._fps = 24
+        self._substeps = int(1 / self._fps // self._dt) # Do fake automatated updated attribute
         self.curr_time =  0
 
         self.gravity = ti.Vector([0, 0, -9.81])
         self.spring_rigidity = 1.7e5
         self.spring_damping = 1e9
-        self.drag_damping = 8 # 1.5
+        self.air_drag = 8 # 1.5
 
         self.bending_springs = True
         self.isnot_init = True
@@ -31,8 +29,8 @@ class MassSpringSimulator():
         print("  Simulating with Mass spring method")
         print("")
         print("--Simulation parameters-----------------------")
-        print(f" {'dt':<10}: {self.dt}")
-        print(f" {'substeps':<10}: {self.substeps}")
+        print(f" {'dt':<10}: {self._dt}")
+        print(f" {'substeps':<10}: {self._substeps}")
         print("")
         print(f" {'gravity':<10}: {self.gravity}")
         print(f" {'rigidity':<10}: {self.spring_rigidity}")
@@ -43,6 +41,50 @@ class MassSpringSimulator():
         # self.ball_radius = 0.3
         # self.ball_center = ti.Vector.field(3, dtype=float, shape=(1,))
         # self.ball_center[0] = [0, 0, 0]
+
+        @property
+        def arch(self):
+            if self._arch==ti.cpu:
+                return "Cpu"
+            elif self._arch==ti.vulkan:
+                return "GPU Vulkan"
+            elif self._arch==ti.metal:
+                return "GPU Metal"
+            elif self._arch==ti.cuda:
+                return "GPU Cuda"
+            else:
+                return self._arch
+        @arch.setter
+        def arch(self, arch_str):
+            """ apparamment amdgpu, dx12, opengl, gles, existent aussi ..."""
+            if arch_str=='GPU':
+                self._arch = ti.gpu
+            elif arch_str=='CPU':
+                self._arch = ti.cpu
+            elif arch_str=='VULKAN':
+                self._arch = ti.vulkan
+            elif arch_str=='METAL':
+                self._arch = ti.metal
+            elif arch_str=='CUDA':
+                self._arch = ti.cuda
+            else:
+                print("ERROR: this arch doesn't exist")
+
+        @property
+        def dt(self):
+            return self._dt
+        @dt.setter
+        def dt(self, new_dt):
+            self._dt = new_dt
+            self._substeps = int(1 / self._fps // self._dt)
+
+        @property
+        def fps(self):
+            return self._fps
+        @fps.setter
+        def fps(self, new_fps: int):
+            self._fps = new_fps
+            self._substeps = int(1 / self._fps // self._dt)
 
     def initialize_from_obj(self, obj: bpy.types.Object):
         # Create Device fields
@@ -69,9 +111,10 @@ class MassSpringSimulator():
         for i, neib in enumerate(neighbor):
             s = neib.copy()
             neighbor_of_neighbors = sum([neighbor[k] for k in neib], [])
-            for neib_neib in neighbor_of_neighbors:
-                if neib_neib not in s+[i]:
-                    s += [neib_neib]
+            if self.bending_springs:
+                for neib_neib in neighbor_of_neighbors:
+                    if neib_neib not in s+[i]:
+                        s += [neib_neib]
             springs.append(s)
         # Fill edges to undefined value
         self.max_spring = max( [len(springs_list) for springs_list in springs] )
@@ -85,6 +128,7 @@ class MassSpringSimulator():
         self.edges = np.array(springs, dtype=np.int32)
 
         # Init GPU fields
+        ti.init(self._arch)
         self.create_fields()
         self.initialize_points()
         self.initialize_velocity()
@@ -131,7 +175,7 @@ class MassSpringSimulator():
     
     @ti.kernel
     def initialize_velocity(self):
-        for i in self.x:
+        for i in self.v:
             self.v[i] = [0, 0, 0]
 
     def initialize_springs(self):
@@ -155,7 +199,7 @@ class MassSpringSimulator():
         self.l0.from_numpy(np.array(all_l0))
 
     def frame_forward(self):
-        for t in range(self.substeps):
+        for t in range(self._substeps):
             self.step_forward()
             self.curr_time += t
 
@@ -183,8 +227,8 @@ class MassSpringSimulator():
                 f += spring_vel.dot(dir) * self.spring_damping * l*l
                 force += self.spring_rigidity * (l-l0[j]) * dir
                 # print("point:", i, "neighbor:", j, "xi=", x, "xj=", self.x[spring_id], "neighb_id", spring_id)
-            v += force * self.dt
-            v *= ti.exp(-self.drag_damping * self.dt)
+            v += force * self._dt
+            v *= ti.exp(-self.drag_damping * self._dt)
 
             # # Surfacic Forces
             # distance_to_sphere_center = x - ti.Vector([0.0, 0.0, 0.0])
@@ -194,7 +238,7 @@ class MassSpringSimulator():
             #     normal = distance_to_sphere_center.normalized()
             #     v -= ti.min(v.dot(normal), 0) * normal
 
-            x += self.dt * v / 2
+            x += self._dt * v / 2
 
             if i!=0 and i!=1:
                 self.x[i] = x
