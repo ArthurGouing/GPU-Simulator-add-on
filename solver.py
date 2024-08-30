@@ -35,6 +35,10 @@ class Solver(ABC):
         self.curr_time =  0
 
         self.mass = 1.
+<<<<<<< HEAD
+=======
+        self._mass = 1.
+>>>>>>> 253f263 (XPBD)
         self.gravity = ti.Vector([0, 0, -9.81])
 
         self.isnot_init = True

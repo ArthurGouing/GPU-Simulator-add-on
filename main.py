@@ -133,6 +133,11 @@ class ClothPanel(bpy.types.Panel):
             layout.prop(sim, "drag")
             layout.split(factor=1.)
             layout.prop(sim, "bending")
+        if sim.solver=="XPBD":
+            layout.prop(sim, "compliance")
+            layout.prop(sim, "relaxation")
+            layout.split(factor=1.)
+            layout.prop(sim, "bending")
         return
 
 class InitSimulatorOperator(bpy.types.Operator):
@@ -174,6 +179,7 @@ class DelSimulatorOperator(bpy.types.Operator):
         
 
 def update_sim_prop(self, context):
+<<<<<<< HEAD
     cloth_sim.arch = self.arch
     cloth_sim.fps = self.fps
     cloth_sim.dt = self.dt
@@ -188,18 +194,16 @@ def update_sim_prop(self, context):
         cloth_sim.bending_springs = self.bending
     cloth_sim.print_parameter()
 def update_arch(self, context):
+=======
+>>>>>>> 253f263 (XPBD)
     cloth_sim.arch = self.arch
-def update_fps(self, context):
     cloth_sim.fps = self.fps
-def update_dt(self, context):
     cloth_sim.dt = self.dt
-def update_gravity(self, context):
     cloth_sim.gravity[0] = self.gravity[0]
     cloth_sim.gravity[1] = self.gravity[1]
     cloth_sim.gravity[2] = self.gravity[2]
-    cloth_sim.print_parameter()
-def update_mass(self, context):
     cloth_sim.mass = self.mass
+<<<<<<< HEAD
     cloth_sim.print_parameter()
 def update_k(self, context):
     if isinstance(cloth_sim, ExplicitMassSpring):
@@ -215,6 +219,16 @@ def update_drag(self, context):
     cloth_sim.print_parameter()
 def update_bending(self, context):
     if isinstance(cloth_sim, ExplicitMassSpring):
+=======
+    if isinstance(cloth_sim, ExplicitMassSpring):
+        cloth_sim.spring_rigidity = self.k
+        cloth_sim.spring_damping = self.alpha
+        cloth_sim.air_drag = self.drag
+        cloth_sim.bending_springs = self.bending
+    if isinstance(cloth_sim, PositionBasedDynamic):
+        cloth_sim.compliance = self.compliance
+        cloth_sim.relax_coeff = self.relaxation
+>>>>>>> 253f263 (XPBD)
         cloth_sim.bending_springs = self.bending
     cloth_sim.print_parameter()
 
@@ -228,6 +242,7 @@ class ClothSimulationProperty(bpy.types.PropertyGroup):
     obj:     bpy.props.PointerProperty(type=bpy.types.Object, name="Cloth mesh", description="Object which will be simulated.")
     # Common to all solver parameters
     fps:     bpy.props.IntProperty(name="FPS", default=24, update=update_sim_prop)
+<<<<<<< HEAD
     dt:      bpy.props.FloatProperty(name="Delta Time", default=0.04, precision=6, description="Time between to sub simulation step. Smaller is the step, more stable is the simuation, but also slower.", update=update_sim_prop)
     # Mass-spring parameters
     gravity: bpy.props.FloatVectorProperty(name="Gravity", subtype='ACCELERATION', default=Vector((0,0,9.81)), description="Direction and intensity of the gravity force, apply to all points.", update=update_sim_prop)
@@ -236,6 +251,19 @@ class ClothSimulationProperty(bpy.types.PropertyGroup):
     alpha:   bpy.props.FloatProperty(name="Spring damping", description="A bigger damping, limite the speed movement of the cloth", update=update_sim_prop)
     drag:    bpy.props.FloatProperty(name="Air drag", description="Air drag applied on the cloth. A big air drag improve the stability.", update=update_sim_prop)
     bending: bpy.props.BoolProperty(name="Bending springs", description="Use or no the Bending springs", update=update_sim_prop)
+=======
+    dt:      bpy.props.FloatProperty(name="Delta Time", default=0.004, precision=6, description="Time between to sub simulation step. Smaller is the step, more stable is the simuation, but also slower.", update=update_sim_prop)
+    gravity: bpy.props.FloatVectorProperty(name="Gravity", subtype='ACCELERATION', default=Vector((0,0,9.81)), description="Direction and intensity of the gravity force, apply to all points.", update=update_sim_prop)
+    mass:    bpy.props.FloatProperty(name="Mass", description="Mass totale of the object.", default=1.)
+    # Mass-spring parameters
+    k:       bpy.props.FloatProperty(name="Spring rigidity", description="Rigidity of the springs. It represent the required quantity of force to move a points of 1kg to 1 meter.", update=update_sim_prop, default=1e4)
+    alpha:   bpy.props.FloatProperty(name="Spring damping", description="A bigger damping, limite the speed movement of the cloth", update=update_sim_prop, default=1e4)
+    drag:    bpy.props.FloatProperty(name="Air drag", description="Air drag applied on the cloth. A big air drag improve the stability.", update=update_sim_prop, default=1.)
+    bending: bpy.props.BoolProperty(name="Bending springs", description="Use or no the Bending springs", update=update_sim_prop)
+    # WPBD parameters
+    compliance: bpy.props.FloatProperty(name="Compliance", description="Caracterize the flexibility of the constraint. A smaller value generate stiff constraint and more rigid objects dynamics", update=update_sim_prop, default=0.)
+    relaxation: bpy.props.FloatProperty(name="Relaxation", description="divide the dX update by the relaxation coefficient. A small value impose a slower evoluiton of the system which improve the stability.", update=update_sim_prop, default=1.)
+>>>>>>> 253f263 (XPBD)
     
     
 

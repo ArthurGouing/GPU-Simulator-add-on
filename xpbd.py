@@ -15,11 +15,23 @@ class PositionBasedDynamic(Solver):
         super().__init__(arch)
         self.name = "XPBD"
 
+<<<<<<< HEAD
         self.compliance = 2e-7 / self._dt**2
+=======
+        self.compliance = 0.0 / self._dt**2
+        self.relax_coeff = 1.
+
+        self.bending_springs = False
+>>>>>>> 253f263 (XPBD)
 
     def print_parameter(self):
         super().print_parameter()
         print(f" {'compliance':<10}: {self.compliance}")
+<<<<<<< HEAD
+=======
+        print(f" {'relaxation coeff':<10}: {self.relax_coeff}")
+        print(f" {'Bending':<10}: {self.bending_springs}")
+>>>>>>> 253f263 (XPBD)
         print("------------------------------------------------------")
         return
 
@@ -31,6 +43,7 @@ class PositionBasedDynamic(Solver):
         self._compliance = new_compliance
         self._alpha_compliance = self._compliance / self._dt**2
 
+<<<<<<< HEAD
     @property
     def mass(self):
         return self._mass
@@ -40,6 +53,8 @@ class PositionBasedDynamic(Solver):
         self._invmass = 1./self._mass
         print(self._invmass)
 
+=======
+>>>>>>> 253f263 (XPBD)
     def initialize_from_obj(self, obj: bpy.types.Object):
         # Get Object sizes
         self.n      = len(obj.data.vertices)
@@ -130,7 +145,11 @@ class PositionBasedDynamic(Solver):
             vec = v1-v0
             dist = vec.norm()
             constraint = dist - self.l0[e]
+<<<<<<< HEAD
             lmbda = constraint / (self._invmass + self._compliance)
+=======
+            lmbda = constraint / (self.mass + self._compliance)
+>>>>>>> 253f263 (XPBD)
             self.dx[id_1] += lmbda / 2 * vec.normalized()
             self.dx[id_2] -= lmbda / 2 * vec.normalized()
 
@@ -139,5 +158,9 @@ class PositionBasedDynamic(Solver):
         for i in self.x:
             if i!=0 and i!=1:
                 x_m1 = self.x[i]
+<<<<<<< HEAD
                 self.x[i] = self.x_tmp[i] + self.dx[i]/8.
+=======
+                self.x[i] = self.x_tmp[i] + self.dx[i]/4. * self.relax_coeff
+>>>>>>> 253f263 (XPBD)
                 self.v[i] = (self.x[i] - x_m1) / self._dt
