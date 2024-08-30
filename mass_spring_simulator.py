@@ -2,9 +2,12 @@ import taichi as ti
 import numpy as np
 import bpy
 
+from solver import Solver
+
 @ti.data_oriented
-class ExplicitMassSpringSimulator():
+class ExplicitMassSpringSimulator(Solver):
     def __init__(self, arch) -> None:
+        super().__init__(arch)
         # Architecture Computation
         self.name = "Explicit Mass Spring"
         self.arch = arch # ti.vulkan if ti._lib.core.with_vulkan() else ti.cuda
@@ -15,6 +18,7 @@ class ExplicitMassSpringSimulator():
         self._substeps = int(1 / self._fps // self._dt) # Do fake automatated updated attribute
         self.curr_time =  0
 
+        self.mass = 1.
         self.gravity = ti.Vector([0, 0, -9.81])
         self.spring_rigidity = 1.7e5
         self.spring_damping = 1e9
@@ -23,18 +27,17 @@ class ExplicitMassSpringSimulator():
         self.bending_springs = True
         self.isnot_init = True
 
-        self.print_parameter()
-
     def print_parameter(self):
         # Print Simulation Informations
         print("")
-        print("  Simulating with Mass spring method")
+        print(f"  Simulating with {self.name} method")
         print("")
         print("--Simulation parameters-----------------------")
         print(f" {'dt':<10}: {self._dt}")
         print(f" {'fps':<10}: {self._fps}")
         print(f" {'substeps':<10}: {self._substeps}")
         print("")
+        print(f" {'mass':<10}: {self.mass}")
         print(f" {'gravity':<10}: {self.gravity}")
         print(f" {'rigidity':<10}: {self.spring_rigidity}")
         print(f" {'damping':<10}: {self.spring_damping}")
@@ -88,34 +91,38 @@ class ExplicitMassSpringSimulator():
         print("substeps=", self._substeps)
 
     def initialize_from_obj(self, obj: bpy.types.Object):
-        # Create Device fields
-        self.n = len(obj.data.vertices)
-        self.n_spring = len(obj.data.edges) # sum([len(e) for e in obj.data.edges], 0)
-        self.num_triangles = len(obj.data.polygons) # (self.n - 1) * (self.n - 1) * 2
+        # Get Object sizes
+        self.n      = len(obj.data.vertices)
+        self.n_edge = len(obj.data.edges) # sum([len(e) for e in obj.data.edges], 0)
+        self.n_prim = len(obj.data.polygons) # (self.n - 1) * (self.n - 1) * 2
         
-        # Fill positions from object mesh
+        # Get points a list of list (uneven list size)
         points = list()
-        neighbor = list()
-        springs = list()
-        for i in range(self.n):
-            neighbor.append(list())
-        # Build points
         for v in obj.data.vertices:
             points.append([v.co.x, v.co.y, v.co.z])
-        # Build edges
+        self.points = np.array(points, dtype=np.single)
+
+        # Get edges as numpy
+        neighbor_point = list()
+        for i in range(self.n):
+            neighbor_point.append(list())
         for e in obj.data.edges:
             p_id1 = e.vertices[0]
             p_id2 = e.vertices[1]
-            neighbor[p_id2].append(p_id1)
-            neighbor[p_id1].append(p_id2)
-        
-        for i, neib in enumerate(neighbor):
+            neighbor_point[p_id2].append(p_id1)
+            neighbor_point[p_id1].append(p_id2)
+        self.neighbor_point = neighbor_point
+
+        # Get primitives as numpy (either face or tetrahedron)
+        # build springs // constraints
+        springs = list()
+        for i, neib in enumerate(neighbor_point):
             s = neib.copy()
-            neighbor_of_neighbors = sum([neighbor[k] for k in neib], [])
+            neighbor_of_neighbors = sum([neighbor_point[p_id] for p_id in neib], [])
             if self.bending_springs:
-                for neib_neib in neighbor_of_neighbors:
-                    if neib_neib not in s+[i]:
-                        s += [neib_neib]
+                for np_id in neighbor_of_neighbors:
+                    if np_id not in s+[i]:
+                        s += [np_id]
             springs.append(s)
         # Fill edges to undefined value
         self.max_spring = max( [len(springs_list) for springs_list in springs] )
@@ -123,9 +130,6 @@ class ExplicitMassSpringSimulator():
             diff = self.max_spring - len(e)
             if diff > 0:
                 e += diff*[-1] 
-        
-        self.points = np.array(points, dtype=np.single)
-        self.neighbor = neighbor
         self.edges = np.array(springs, dtype=np.int32)
 
         # Init GPU fields
@@ -136,11 +140,14 @@ class ExplicitMassSpringSimulator():
         self.initialize_springs()
 
         del[points]
-        del[neighbor]
+        del[neighbor_point]
 
         # Springs
         # self.initialize_springs()
         self.isnot_init = False
+        self.print_mesh_parameter()
+
+    def print_mesh_parameter(self):
         print("")
         print("--Mesh parameters-----------------------")
         print(f" {'n':<10}: {self.n}")
@@ -212,18 +219,17 @@ class ExplicitMassSpringSimulator():
         obj.data.update()
     def frame_forward(self):
         for t in range(self._substeps):
-            self.step_forward()
+            self.step_forward()# self.gravity[0], self.gravity[1], self.gravity[2])
             self.curr_time += t
 
     @ti.kernel
-    def step_forward(self):
+    def step_forward(self): # self, gx: float, gy: float, gz:float): # gravity: ti.types.vector()):
         for i in self.x:
-            # self.x[i] += ti.Vector([0, 0, 0.001])
             x = self.x[i]
             v = self.v[i]
             l0 = self.l0[i]
             # Volumic Forces
-            force = self.gravity
+            force = self.gravity# ti.Vector([gx, gy, gz]) # gravity
 
             # # Internal Forces
             for j in range(self.max_spring): # self.springs[i]:

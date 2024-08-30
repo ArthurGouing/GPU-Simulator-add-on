@@ -16,18 +16,24 @@ print(dir, bpy.data.filepath)
 print(sys.path)
 
 ### Local Import ###
-import mass_spring_simulator
+import solver
+import exp_mass_spring
+import xpbd
 
 # this next part forces a reload in case you edit the source after you first start the blender session
 import imp
-imp.reload(mass_spring_simulator)
+imp.reload(solver)
+imp.reload(exp_mass_spring)
+imp.reload(xpbd)
 
-from mass_spring_simulator import ExplicitMassSpringSimulator
+from exp_mass_spring import ExplicitMassSpring
+from xpbd import PositionBasedDynamic
 
 cloth_sim = None
 
-solver = [
-    ("EMS", "Explicit Mass Spring", "Mass spring method to solve the dynamics", 0)
+solver_item = [
+    ("EMS", "Explicit Mass Spring", "Mass spring method to solve the dynamics", 0),
+    ("XPBD", "Position Based Dynamics", "Use the well known XPBD solver. This solver is more stable, specially for stiff material", 1)
 ]
 arch = [
     ("CPU", "Multi-CPU", "Multi CPU architecture backend to make the computation.", 0),
@@ -142,9 +148,14 @@ class InitSimulatorOperator(bpy.types.Operator):
         sim_prop = context.scene.cloth_simulator
         global cloth_sim
         if sim_prop.solver=="EMS":
-            cloth_sim=ExplicitMassSpringSimulator(sim_prop.arch)
+            cloth_sim=ExplicitMassSpring(sim_prop.arch)
+        elif sim_prop.solver=="XPBD":
+            cloth_sim=PositionBasedDynamic(sim_prop.arch)
         else:
             print(f"ERROR: the solver {sim_prop.solver} does not exist")
+
+        update_sim_prop(sim_prop, context)
+
         return {'FINISHED'}
 class DelSimulatorOperator(bpy.types.Operator):
     """Tooltip"""
@@ -157,11 +168,25 @@ class DelSimulatorOperator(bpy.types.Operator):
 
     def execute(self, context):
         global cloth_sim
+        context.scene.frame_set(0)
         cloth_sim = None
         return {'FINISHED'}
         
 
-
+def update_sim_prop(self, context):
+    cloth_sim.arch = self.arch
+    cloth_sim.fps = self.fps
+    cloth_sim.dt = self.dt
+    cloth_sim.gravity[0] = self.gravity[0]
+    cloth_sim.gravity[1] = self.gravity[1]
+    cloth_sim.gravity[2] = self.gravity[2]
+    cloth_sim.mass = self.mass
+    if isinstance(cloth_sim, ExplicitMassSpring):
+        cloth_sim.spring_rigidity = self.k
+        cloth_sim.spring_damping = self.alpha
+        cloth_sim.air_drag = self.drag
+        cloth_sim.bending_springs = self.bending
+    cloth_sim.print_parameter()
 def update_arch(self, context):
     cloth_sim.arch = self.arch
 def update_fps(self, context):
@@ -177,19 +202,19 @@ def update_mass(self, context):
     cloth_sim.mass = self.mass
     cloth_sim.print_parameter()
 def update_k(self, context):
-    if isinstance(cloth_sim, ExplicitMassSpringSimulator):
+    if isinstance(cloth_sim, ExplicitMassSpring):
         cloth_sim.spring_rigidity = self.k
     cloth_sim.print_parameter()
 def update_alpha(self, context):
-    if isinstance(cloth_sim, ExplicitMassSpringSimulator):
+    if isinstance(cloth_sim, ExplicitMassSpring):
         cloth_sim.spring_damping = self.alpha
     cloth_sim.print_parameter()
 def update_drag(self, context):
-    if isinstance(cloth_sim, ExplicitMassSpringSimulator):
+    if isinstance(cloth_sim, ExplicitMassSpring):
         cloth_sim.air_drag = self.drag
     cloth_sim.print_parameter()
 def update_bending(self, context):
-    if isinstance(cloth_sim, ExplicitMassSpringSimulator):
+    if isinstance(cloth_sim, ExplicitMassSpring):
         cloth_sim.bending_springs = self.bending
     cloth_sim.print_parameter()
 
@@ -198,19 +223,19 @@ class ClothSimulationProperty(bpy.types.PropertyGroup):
     Custom property structure.
     Belong to : bpy.types.Scene.cloth_simulator
     """
-    arch:    bpy.props.EnumProperty(items=arch, name="Architecture", description="Specify the architecture and the backend that Majax simulator will use.", update=update_arch)
-    solver:  bpy.props.EnumProperty(items=solver, name="Method", description="Choose the Solver method to use to make the simulation.")
+    arch:    bpy.props.EnumProperty(items=arch, name="Architecture", description="Specify the architecture and the backend that Majax simulator will use.", update=update_sim_prop)
+    solver:  bpy.props.EnumProperty(items=solver_item, name="Method", description="Choose the Solver method to use to make the simulation.")
     obj:     bpy.props.PointerProperty(type=bpy.types.Object, name="Cloth mesh", description="Object which will be simulated.")
     # Common to all solver parameters
-    fps:     bpy.props.IntProperty(name="FPS", default=24, update=update_fps)
-    dt:      bpy.props.FloatProperty(name="Delta Time", default=0.04, precision=6, description="Time between to sub simulation step. Smaller is the step, more stable is the simuation, but also slower.", update=update_dt)
+    fps:     bpy.props.IntProperty(name="FPS", default=24, update=update_sim_prop)
+    dt:      bpy.props.FloatProperty(name="Delta Time", default=0.04, precision=6, description="Time between to sub simulation step. Smaller is the step, more stable is the simuation, but also slower.", update=update_sim_prop)
     # Mass-spring parameters
-    gravity: bpy.props.FloatVectorProperty(name="Gravity", subtype='ACCELERATION', default=Vector((0,0,9.81)), description="Direction and intensity of the gravity force, apply to all points.", update=update_gravity)
+    gravity: bpy.props.FloatVectorProperty(name="Gravity", subtype='ACCELERATION', default=Vector((0,0,9.81)), description="Direction and intensity of the gravity force, apply to all points.", update=update_sim_prop)
     mass:    bpy.props.FloatProperty(name="Mass", description="Mass totale of the object.")
-    k:       bpy.props.FloatProperty(name="Spring rigidity", description="Rigidity of the springs. It represent the required quantity of force to move a points of 1kg to 1 meter.", update=update_k)
-    alpha:   bpy.props.FloatProperty(name="Spring damping", description="A bigger damping, limite the speed movement of the cloth", update=update_alpha)
-    drag:    bpy.props.FloatProperty(name="Air drag", description="Air drag applied on the cloth. A big air drag improve the stability.", update=update_drag)
-    bending: bpy.props.BoolProperty(name="Bending springs", description="Use or no the Bending springs", update=update_bending)
+    k:       bpy.props.FloatProperty(name="Spring rigidity", description="Rigidity of the springs. It represent the required quantity of force to move a points of 1kg to 1 meter.", update=update_sim_prop)
+    alpha:   bpy.props.FloatProperty(name="Spring damping", description="A bigger damping, limite the speed movement of the cloth", update=update_sim_prop)
+    drag:    bpy.props.FloatProperty(name="Air drag", description="Air drag applied on the cloth. A big air drag improve the stability.", update=update_sim_prop)
+    bending: bpy.props.BoolProperty(name="Bending springs", description="Use or no the Bending springs", update=update_sim_prop)
     
     
 
