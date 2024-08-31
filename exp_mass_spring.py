@@ -27,10 +27,7 @@ class ExplicitMassSpring(Solver):
         print(f" {'rigidity':<10}: {self.spring_rigidity}")
         print(f" {'damping':<10}: {self.spring_damping}")
         print(f" {'drag':<10}: {self.air_drag}")
-<<<<<<< HEAD
-=======
         print(f" {'Bending':<10}: {self.bending_springs}")
->>>>>>> 253f263 (XPBD)
         print("------------------------------------------------------")
         return
 
