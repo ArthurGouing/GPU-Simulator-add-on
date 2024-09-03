@@ -69,6 +69,49 @@ class PositionBasedDynamic(Solver):
         self.edges_l0 = np.array(edges_l0, dtype=np.single)
         del[edges_l0]
 
+        # Create list of involved point in the bending_constraint
+        bending_cons = list()
+        for e in range(len(self.edges)):
+            bending_cons.append(list())
+        for i, p in enumerate(obj.data.polygons):
+            # trouve les voisins
+            n_vert = len(p.vertices)
+            # vertices id of the face
+            verts = p.vertices
+            # verts = [self.points[v_id] for v_id in p.vertices]
+            # The edges of the face as a set of 2 vertice indices
+            edges = [set([verts[i],verts[(i+1)%n_vert]]) for i in range(n_vert)]
+            # List of edges id of the face
+            edges_id = len(edges) * [None]
+            for e_id, e in enumerate(self.edges):
+                for _e_id, _e in enumerate(edges):
+                    if set(e)==_e:
+                        edges_id[_e_id] = e_id
+            print(edges_id)
+            # edges_id = [e_id for e_id, e in enumerate(self.edges) if set(e) in edges]
+            # edges_id is not sorted along edges
+            print("")
+            print(i, edges, edges_id)
+            for e_id, e in zip(edges_id, edges):
+                print("e_id", e_id, e)
+                cons_point=bending_cons[e_id]
+                e_list = list(e)
+                cons_point.append(e_list[0]) if e_list[0] not in cons_point else None
+                cons_point.append(e_list[1]) if e_list[1] not in cons_point else None
+                f_list = list(set(verts)-e)
+                cons_point.append(f_list[0])
+                cons_point.append(f_list[1])
+                print(cons_point, f_list)
+                # bending_cons[e_id] = cons_point
+        self.bending_point = [ids for ids in bending_cons if len(ids)>=6]
+        self.n_bending_cons = len(self.bending_point)
+        print("number of bending constraints: ", self.n_bending_cons)
+        print("number of stretching constraints: ", self.n_edge)
+        print("Print bending constraints points")
+        print(*self.bending_point, sep="\n")
+        del[bending_cons]
+        print("Finish building bending_points")
+
         # Send to GPU fields
         ti.init(self._arch)
         self.create_fields()
@@ -88,7 +131,8 @@ class PositionBasedDynamic(Solver):
 
         self.dx = ti.Vector.field(3, dtype=float, shape=self.n)
 
-        self.cons  = ti.Vector.field(2, dtype=int, shape=self.n_edge)
+        self.stretch_cons  = ti.Vector.field(2, dtype=int, shape=self.n_edge)
+        self.bending_cons  = ti.Vector.field(6, dtype=int, shape=self.n_bending_cons)
         self.l0    = ti.field(float, shape=self.n_edge)
         pass
 
@@ -106,13 +150,17 @@ class PositionBasedDynamic(Solver):
             self.v[i] = [0, 0, 0]
 
     def fill_constraints(self):
-        self.cons.from_numpy(np.array(self.edges, dtype=np.int32))
+        self.stretch_cons.from_numpy(np.array(self.edges, dtype=np.int32))
         self.l0.from_numpy(self.edges_l0)
+
+        self.bending_cons.from_numpy(np.array(self.bending_point, dtype=np.int32))
 
 
     def step_forward(self):
         self.predict()
-        self.correction()
+        self.stretch_compute()
+        if self.bending_springs:
+            self.bending_compute()
         self.update_field()
 
     @ti.kernel
@@ -123,9 +171,9 @@ class PositionBasedDynamic(Solver):
             self.dx[i] = 0.
 
     @ti.kernel
-    def correction(self):
-        for e in self.cons:
-            id_1, id_2 = self.cons[e][0], self.cons[e][1] 
+    def stretch_compute(self):
+        for e in self.stretch_cons:
+            id_1, id_2 = self.stretch_cons[e][0], self.stretch_cons[e][1] 
             v0, v1 = self.x_tmp[id_1], self.x_tmp[id_2]
             vec = v1-v0
             dist = vec.norm()
@@ -133,6 +181,17 @@ class PositionBasedDynamic(Solver):
             lmbda = constraint / (self.mass + self._compliance)
             self.dx[id_1] += lmbda / 2 * vec.normalized()
             self.dx[id_2] -= lmbda / 2 * vec.normalized()
+
+    @ti.kernel
+    def bending_compute(self):
+        for e in self.bending_cons:
+            # eliminate edges on the boundary which aren't surrounded by 2 faces
+
+            self.dx[id_1] += lmbda 
+            self.dx[id_2] += lmbda 
+            self.dx[id_3] += lmbda 
+            self.dx[id_4] += lmbda 
+            pass
 
     @ti.kernel
     def update_field(self):
