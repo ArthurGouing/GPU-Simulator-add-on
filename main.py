@@ -135,7 +135,9 @@ class ClothPanel(bpy.types.Panel):
             layout.prop(sim, "bending")
         if sim.solver=="XPBD":
             layout.prop(sim, "compliance")
-            layout.prop(sim, "relaxation")
+            layout.prop(sim, "bending_compliance")
+            layout.prop(sim, "stretch_relaxation")
+            layout.prop(sim, "bending_relaxation")
             layout.prop(sim, "friction")
             layout.split(factor=1.)
             layout.prop(sim, "bending")
@@ -195,9 +197,11 @@ def update_sim_prop(self, context):
         cloth_sim.bending_springs = self.bending
     if isinstance(cloth_sim, PositionBasedDynamic):
         cloth_sim.compliance = self.compliance
-        cloth_sim.relax_coeff = self.relaxation
+        cloth_sim._bcompliance = self.bending
+        cloth_sim.relax_coeff_stretch = self.stretch_relaxation
+        cloth_sim.relax_coeff_bending = self.bending_relaxation
         cloth_sim.friction_coeff = self.friction
-        cloth_sim.bending_springs = self.bending
+        cloth_sim.bending_springs = self.bending_compliance
         cloth_sim.ground = self.ground
     cloth_sim.print_parameter()
 
@@ -221,7 +225,9 @@ class ClothSimulationProperty(bpy.types.PropertyGroup):
     bending: bpy.props.BoolProperty(name="Bending springs", description="Use or no the Bending springs", update=update_sim_prop)
     # WPBD parameters
     compliance: bpy.props.FloatProperty(name="Compliance", description="Caracterize the flexibility of the constraint. A smaller value generate stiff constraint and more rigid objects dynamics", update=update_sim_prop, default=0.)
-    relaxation: bpy.props.FloatProperty(name="Relaxation", description="divide the dX update by the relaxation coefficient. A small value impose a slower evoluiton of the system which improve the stability.", update=update_sim_prop, default=1.)
+    bending_compliance: bpy.props.FloatProperty(name="Bending Compliance", description="Caracterize the flexibility of the constraint. A smaller value generate stiff constraint and more rigid objects dynamics", update=update_sim_prop, default=0.)
+    stretch_relaxation: bpy.props.FloatProperty(name="Stretch Relaxation", description="divide the dX update by the relaxation coefficient. A small value impose a slower evoluiton of the system which improve the stability.", update=update_sim_prop, default=1.)
+    bending_relaxation: bpy.props.FloatProperty(name="Bending Relaxation", description="divide the dX update by the relaxation coefficient. A small value impose a slower evoluiton of the system which improve the stability.", update=update_sim_prop, default=1.)
     friction:   bpy.props.FloatProperty(name="Friction", description="Friction of the particles with the ground. It correspond to the % energy preserved at each iteration.", update=update_sim_prop, default=0.9)
     ground:     bpy.props.BoolProperty(name="Ground", description="Use a ground which the object collide with.", update=update_sim_prop)
     

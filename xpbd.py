@@ -1,6 +1,8 @@
 import bpy
 import taichi as ti
+import taichi.math as mti
 import numpy as np
+from math import acos
 
 from solver import Solver
 
@@ -15,8 +17,10 @@ class PositionBasedDynamic(Solver):
         super().__init__(arch)
         self.name = "XPBD"
 
-        self.compliance = 0.0 / self._dt**2
-        self.relax_coeff = 1.
+        self.compliance = 1e7 / self._dt**2
+        self._bcompliance = 1e7 / self._dt**2
+        self.relax_coeff_stretch = 1.
+        self.relax_coeff_bending = 1.
         self.friction_coeff = 0.9
 
         self.bending_springs = False
@@ -25,7 +29,8 @@ class PositionBasedDynamic(Solver):
     def print_parameter(self):
         super().print_parameter()
         print(f" {'compliance':<10}: {self.compliance}")
-        print(f" {'relaxation coeff':<10}: {self.relax_coeff}")
+        print(f" {'relaxation stretch coeff':<10}: {self.relax_coeff_stretch}")
+        print(f" {'relaxation bending coeff':<10}: {self.relax_coeff_bending}")
         print(f" {'frictioin coeff':<10}: {self.friction_coeff}")
         print(f" {'Bending':<10}: {self.bending_springs}")
         print(f" {'ground':<10}: {self.ground}")
@@ -87,30 +92,36 @@ class PositionBasedDynamic(Solver):
                 for _e_id, _e in enumerate(edges):
                     if set(e)==_e:
                         edges_id[_e_id] = e_id
-            print(edges_id)
             # edges_id = [e_id for e_id, e in enumerate(self.edges) if set(e) in edges]
             # edges_id is not sorted along edges
-            print("")
-            print(i, edges, edges_id)
             for e_id, e in zip(edges_id, edges):
-                print("e_id", e_id, e)
                 cons_point=bending_cons[e_id]
                 e_list = list(e)
                 cons_point.append(e_list[0]) if e_list[0] not in cons_point else None
                 cons_point.append(e_list[1]) if e_list[1] not in cons_point else None
                 f_list = list(set(verts)-e)
                 cons_point.append(f_list[0])
-                cons_point.append(f_list[1])
-                print(cons_point, f_list)
                 # bending_cons[e_id] = cons_point
-        self.bending_point = [ids for ids in bending_cons if len(ids)>=6]
+        self.bending_point = [ids for ids in bending_cons if len(ids)>=4]
         self.n_bending_cons = len(self.bending_point)
-        print("number of bending constraints: ", self.n_bending_cons)
-        print("number of stretching constraints: ", self.n_edge)
-        print("Print bending constraints points")
-        print(*self.bending_point, sep="\n")
         del[bending_cons]
-        print("Finish building bending_points")
+
+        # Compute rest Bending angle
+        # TODO
+        b0 = list()
+        for b in self.bending_point:
+            id_1, id_2, id_3, id_4 = b
+            real_p1 = self.points[id_1]
+            p2 = self.points[id_2] - real_p1
+            p3 = self.points[id_3] - real_p1
+            p4 = self.points[id_4] - real_p1
+            n1 = np.cross(p2, p3)
+            n1 = n1 / np.linalg.norm(n1)
+            n2 = np.cross(p4, p2)
+            n2 = n2 / np.linalg.norm(n2)
+            d = acos(np.dot(n1, n2))
+            b0.append(d)
+        self.bending_cons_b0 = np.array(b0, dtype=np.single)
 
         # Send to GPU fields
         ti.init(self._arch)
@@ -132,8 +143,9 @@ class PositionBasedDynamic(Solver):
         self.dx = ti.Vector.field(3, dtype=float, shape=self.n)
 
         self.stretch_cons  = ti.Vector.field(2, dtype=int, shape=self.n_edge)
-        self.bending_cons  = ti.Vector.field(6, dtype=int, shape=self.n_bending_cons)
+        self.bending_cons  = ti.Vector.field(4, dtype=int, shape=self.n_bending_cons)
         self.l0    = ti.field(float, shape=self.n_edge)
+        self.b0    = ti.field(float, shape=self.n_bending_cons)
         pass
 
     def reset(self):
@@ -154,13 +166,13 @@ class PositionBasedDynamic(Solver):
         self.l0.from_numpy(self.edges_l0)
 
         self.bending_cons.from_numpy(np.array(self.bending_point, dtype=np.int32))
+        self.b0.from_numpy(self.bending_cons_b0)
 
 
     def step_forward(self):
         self.predict()
         self.stretch_compute()
-        if self.bending_springs:
-            self.bending_compute()
+        self.bending_compute()
         self.update_field()
 
     @ti.kernel
@@ -178,27 +190,63 @@ class PositionBasedDynamic(Solver):
             vec = v1-v0
             dist = vec.norm()
             constraint = dist - self.l0[e]
-            lmbda = constraint / (self.mass + self._compliance)
+            lmbda = constraint / (self.mass + self._compliance) / self.relax_coeff_stretch
             self.dx[id_1] += lmbda / 2 * vec.normalized()
             self.dx[id_2] -= lmbda / 2 * vec.normalized()
 
     @ti.kernel
     def bending_compute(self):
         for e in self.bending_cons:
-            # eliminate edges on the boundary which aren't surrounded by 2 faces
+            # Get x values
+            id_1, id_2, id_3, id_4 = self.bending_cons[e]
+            real_p1 = self.x[id_1]
+            p2 = self.x[id_2] - real_p1
+            # p3 = (self.x[id_3]+self.x[id_4])/2 - real_p1
+            # p4 = (self.x[id_5]+self.x[id_6])/2 - real_p1
+            p3 = self.x[id_3] - real_p1
+            p4 = self.x[id_4] - real_p1
 
-            self.dx[id_1] += lmbda 
-            self.dx[id_2] += lmbda 
-            self.dx[id_3] += lmbda 
-            self.dx[id_4] += lmbda 
-            pass
+            # Compute constraint value
+            n1 = mti.normalize(mti.cross(p2, p3))
+            n2 = mti.normalize(mti.cross(p2, p4))
+            d = mti.dot(n1, n2)
+            d = ti.math.clamp(d, -1., 1.)
+
+            cons_val = mti.acos(d) - mti.acos(-1.)# self.b0[e]
+
+            # Compute Grad C for each points
+            q3 = (mti.cross(p2, n2) + mti.cross(n1, p2) * d ) / n1.norm()
+            q4 = (mti.cross(p2, n1) + mti.cross(n2, p2) * d ) / n2.norm()
+            q2 = - (mti.cross(p3, n2) + mti.cross(n1, p3) * d ) / n1.norm() - (mti.cross(p4, n1) + mti.cross(n2, p4) * d ) / n2.norm()
+            q1 = - q2 - q3 - q4
+            q_sum = self.mass * (mti.dot(q1, q1) + mti.dot(q2, q2) + mti.dot(q3, q3) + mti.dot(q4, q4))
+            # q_sum = self.mass * (q1.norm_sqr()+q2.norm_sqr()+q3.norm_sqr()+q4.norm_sqr())
+            
+            # lmbda
+            lmbda = - (mti.sqrt(1-d*d) * cons_val) / (q_sum + self._bcompliance) / self.relax_coeff_bending
+
+            # print("")
+            # print(n1, n2)
+            # print("cos=", d)
+            # print("cons=", cons_val)
+            # print("lambda=", lmbda)
+            # print(f"dx({id_1})", self.mass * lmbda * q1)
+            # print(f"dx({id_2})", self.mass * lmbda * q2)
+            # print(f"dx({id_3})", self.mass * lmbda * q3)
+            # print(f"dx({id_4})", self.mass * lmbda * q4)
+
+            # Update correction displacement
+            self.dx[id_1] += self.mass * lmbda * q1
+            self.dx[id_2] += self.mass * lmbda * q2 
+            self.dx[id_3] += self.mass * lmbda * q3
+            self.dx[id_4] += self.mass * lmbda * q4
 
     @ti.kernel
     def update_field(self):
         for i in self.x:
             if i!=0 and i!=1:
                 x_m1 = self.x[i]
-                new_x = self.x_tmp[i] + self.dx[i]/4. * self.relax_coeff
+                new_x = self.x_tmp[i] + self.dx[i] # relax_coeff is the mean constraint by point
                 v = (new_x - x_m1) / self._dt
                 if self.ground:
                     if new_x.z<0:
