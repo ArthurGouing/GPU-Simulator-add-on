@@ -137,6 +137,8 @@ class ClothPanel(bpy.types.Panel):
             layout.prop(sim, "compliance")
             layout.prop(sim, "bending_compliance")
             layout.prop(sim, "stretch_relaxation")
+            layout.prop(sim, "bending_bending_compliance")
+            layout.prop(sim, "stretch_relaxation")
             layout.prop(sim, "bending_relaxation")
             layout.prop(sim, "friction")
             layout.split(factor=1.)
@@ -196,8 +198,9 @@ def update_sim_prop(self, context):
         cloth_sim.air_drag = self.drag
         cloth_sim.bending_springs = self.bending
     if isinstance(cloth_sim, PositionBasedDynamic):
+        cloth_sim.is_bending = self.bending
         cloth_sim.compliance = self.compliance
-        cloth_sim._bcompliance = self.bending
+        cloth_sim._bcompliance = self.bending_compliance
         cloth_sim.relax_coeff_stretch = self.stretch_relaxation
         cloth_sim.relax_coeff_bending = self.bending_relaxation
         cloth_sim.friction_coeff = self.friction
@@ -225,6 +228,9 @@ class ClothSimulationProperty(bpy.types.PropertyGroup):
     bending: bpy.props.BoolProperty(name="Bending springs", description="Use or no the Bending springs", update=update_sim_prop)
     # WPBD parameters
     compliance: bpy.props.FloatProperty(name="Compliance", description="Caracterize the flexibility of the constraint. A smaller value generate stiff constraint and more rigid objects dynamics", update=update_sim_prop, default=0.)
+    bending_compliance: bpy.props.FloatProperty(name="Bending Compliance", description="Caracterize the flexibility of the constraint. A smaller value generate stiff constraint and more rigid objects dynamics", update=update_sim_prop, default=0.)
+    stretch_relaxation: bpy.props.FloatProperty(name="Stretch Relaxation", description="divide the dX update by the relaxation coefficient. A small value impose a slower evoluiton of the system which improve the stability.", update=update_sim_prop, default=1.)
+    bending_relaxation: bpy.props.FloatProperty(name="Bending Relaxation", description="divide the dX update by the relaxation coefficient. A small value impose a slower evoluiton of the system which improve the stability.", update=update_sim_prop, default=1.)
     bending_compliance: bpy.props.FloatProperty(name="Bending Compliance", description="Caracterize the flexibility of the constraint. A smaller value generate stiff constraint and more rigid objects dynamics", update=update_sim_prop, default=0.)
     stretch_relaxation: bpy.props.FloatProperty(name="Stretch Relaxation", description="divide the dX update by the relaxation coefficient. A small value impose a slower evoluiton of the system which improve the stability.", update=update_sim_prop, default=1.)
     bending_relaxation: bpy.props.FloatProperty(name="Bending Relaxation", description="divide the dX update by the relaxation coefficient. A small value impose a slower evoluiton of the system which improve the stability.", update=update_sim_prop, default=1.)

@@ -20,6 +20,8 @@ class ExplicitMassSpring(Solver):
         self.spring_damping = 1e9
         self.air_drag = 8 # 1.5
 
+        self.friction_coeff = 0.70
+
         self.bending_springs = True
 
     def print_parameter(self):
@@ -63,7 +65,7 @@ class ExplicitMassSpring(Solver):
         self.initialize_fields()
         
         # Send to GPU fields
-        ti.init(self._arch)
+        ti.init(self._arch, unrolling_limit=0)
         self.x = ti.Vector.field(3, dtype=float, shape=self.n)
         self.create_fields()
 
@@ -174,6 +176,12 @@ class ExplicitMassSpring(Solver):
 
             x += self._dt * v / 2
 
-            if i!=0 and i!=1:
-                self.x[i] = x
-                self.v[i] = v
+            if x.z<0:
+                x.x = x.x
+                x.y = x.y
+                x.z = -x.z
+                v.x =  ti.sqrt(self.friction_coeff) * v.x
+                v.y =  ti.sqrt(self.friction_coeff) * v.y
+                v.z = -ti.sqrt(self.friction_coeff) * v.z
+            self.x[i] = x
+            self.v[i] = v

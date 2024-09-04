@@ -23,16 +23,17 @@ class PositionBasedDynamic(Solver):
         self.relax_coeff_bending = 1.
         self.friction_coeff = 0.9
 
-        self.bending_springs = False
+        self.is_bending = False
         self.ground = True
 
     def print_parameter(self):
         super().print_parameter()
-        print(f" {'compliance':<10}: {self.compliance}")
+        print(f" {'stretch compliance':<10}: {self.compliance}")
+        print(f" {'bending compliance':<10}: {self._bcompliance}")
         print(f" {'relaxation stretch coeff':<10}: {self.relax_coeff_stretch}")
         print(f" {'relaxation bending coeff':<10}: {self.relax_coeff_bending}")
         print(f" {'frictioin coeff':<10}: {self.friction_coeff}")
-        print(f" {'Bending':<10}: {self.bending_springs}")
+        print(f" {'Bending':<10}: {self.is_bending}")
         print(f" {'ground':<10}: {self.ground}")
         print("------------------------------------------------------")
         return
@@ -117,7 +118,7 @@ class PositionBasedDynamic(Solver):
             p4 = self.points[id_4] - real_p1
             n1 = np.cross(p2, p3)
             n1 = n1 / np.linalg.norm(n1)
-            n2 = np.cross(p4, p2)
+            n2 = np.cross(p2, p4)
             n2 = n2 / np.linalg.norm(n2)
             d = acos(np.dot(n1, n2))
             b0.append(d)
@@ -171,8 +172,9 @@ class PositionBasedDynamic(Solver):
 
     def step_forward(self):
         self.predict()
+        if self.is_bending:
+            self.bending_compute()
         self.stretch_compute()
-        self.bending_compute()
         self.update_field()
 
     @ti.kernel
@@ -212,7 +214,7 @@ class PositionBasedDynamic(Solver):
             d = mti.dot(n1, n2)
             d = ti.math.clamp(d, -1., 1.)
 
-            cons_val = mti.acos(d) - mti.acos(-1.)# self.b0[e]
+            cons_val = mti.acos(d) - self.b0[e]
 
             # Compute Grad C for each points
             q3 = (mti.cross(p2, n2) + mti.cross(n1, p2) * d ) / n1.norm()
