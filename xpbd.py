@@ -253,8 +253,8 @@ class PositionBasedDynamic(Solver):
                 if self.ground:
                     if new_x.z<0:
                         new_x.z = -new_x.z
-                        v.x = ti.sqrt(self.friction_coeff) * v.x
-                        v.y = ti.sqrt(self.friction_coeff) * v.y
+                        v.x = mti.sqrt(self.friction_coeff) * v.x
+                        v.y = mti.sqrt(self.friction_coeff) * v.y
                         v.z = -v.z
                 self.x[i] = new_x# self.x_tmp[i] + self.dx[i]/4. * self.relax_coeff
                 self.v[i] = v # (self.x[i] - x_m1) / self._dt

@@ -1,5 +1,6 @@
 import bpy
 import taichi as ti
+import taichi.math as mti
 import numpy as np
 
 from solver import Solver
@@ -9,6 +10,55 @@ class ExplicitMassSpring(Solver):
     """
     Description: 
     -------------
+    Solver for the basic expicit mass spring method 
+
+
+    Inherited Attributes:
+    -------------
+    dt                   : The time step of the simulation
+    mass                 : The mass (should be solver specific)
+    gravity              : The gravity values
+    friction_coeff       : The friction coefficient value
+    fps                  : The number of frame per seconds
+    substep              : The number of iteration between 2 frames
+    n                    : The number of verticies in the simulated object
+    n_edge               : The number of edges     in the simulated object
+    n_prim               : The number of polygons  in the simulated object
+    n_collider           : The number of verticies in the static collider object
+    n_anim_collider      : The number of verticies in the anumated collider object
+    is_coll              : Indicate if there is collider in the simulation
+    is_pin               : Indicate if there is pinned vertices in the simulation object
+    points               : Numby array of the verticies of the simulated object
+    pin                  : Python list of the static pinned vertices
+    animated_pin         : Python list of the animated pinned vertices
+    neighbor_point       : python list of the list of neibhot for each vertices (size=n, n_neighb)
+    collider_points      : Numpy array of the verticies of the static collider object
+    anim_collider_points : Numpy array of the verticies of the animated collider object
+    x                    : Taichi array that represent the vertices position
+    v                    : Taichi array that represent the vertices velocity
+    x_collider           : Taichi array that represent the collider vertices position
+
+    Attributes:
+    -------------
+    spring_rigidity      : Parameter which indicate how much force we need to stretch an edge
+    bend_rigidity        : Parameter which indicate how much force we need to bend an edge
+    spring_damping       : Parameter which indicate the spring damping
+    air_drag             : Parameter which indicate the air drag apply to the vertices
+
+    l0                   : Taichi array (n, max_spring) which contains the distance between all the neighbor for each vertices
+    springs              : Taichi array (n, max_spring) which contains the id of all the neighbor for each vertices
+    collider             : Taichi struct which contain the data required to compute the collider response force (id, dist and contact plan normal)
+
+
+
+    Methods:
+    -------------
+    get_field_size          (...)
+    init_other_fields       (...)
+    create_other_gpu_fields (...)
+    step_forward            (...)
+    find_collision          (...)
+    reset                   (...)
     """
 
     def __init__(self, arch) -> None:
@@ -17,10 +67,10 @@ class ExplicitMassSpring(Solver):
 
         # Spring properties
         self.spring_rigidity = 1.7e5
-        self.spring_damping = 1e9
+        self.bend_rigidity   = 1.7e5
+        self.spring_damping  = 1e9
         self.air_drag = 8 # 1.5
 
-        self.friction_coeff = 0.70
 
         self.bending_springs = True
 
@@ -33,64 +83,34 @@ class ExplicitMassSpring(Solver):
         print("------------------------------------------------------")
         return
 
-    def initialize_from_obj(self, obj: bpy.types.Object):
-        # Get Object sizes
-        self.n      = len(obj.data.vertices)
-        self.n_edge = len(obj.data.edges) # sum([len(e) for e in obj.data.edges], 0)
-        self.n_prim = len(obj.data.polygons) # (self.n - 1) * (self.n - 1) * 2
-
-        # Get points a list of list (uneven list size)
-        points = list()
-        for v in obj.data.vertices:
-            points.append([v.co.x, v.co.y, v.co.z])
-        self.points = np.array(points, dtype=np.single)
-        del[points]
-
-        # Get edges as numpy
-        neighbor_point = list()
-        for i in range(self.n):
-            neighbor_point.append(list())
-        for e in obj.data.edges:
-            p_id1 = e.vertices[0]
-            p_id2 = e.vertices[1]
-            neighbor_point[p_id2].append(p_id1)
-            neighbor_point[p_id1].append(p_id2)
-        self.neighbor_point = neighbor_point
-
-        # Get primitives as numpy (either face or tetrahedron)
-        # ...
-        # ...
-
-        # Init CPU fields
-        self.initialize_fields()
-        
-        # Send to GPU fields
-        ti.init(self._arch, unrolling_limit=0)
-        self.x = ti.Vector.field(3, dtype=float, shape=self.n)
-        self.create_fields()
-
-        self.isnot_init = False
-        self.print_mesh_parameter()
+    def get_field_size(self):
         pass
 
-    def create_fields(self):
-        # Point variable
-        self.x = ti.Vector.field(3, dtype=float, shape=self.n)
-        self.v = ti.Vector.field(3, dtype=float, shape=self.n)
+    def init_other_field(self, obj):
+        self.initialize_springs()
+        pass
 
+    def create_other_gpu_fields(self):
         # Spring properties        
         self.l0 = ti.Vector.field(self.max_spring, dtype=float, shape=self.n)
         self.springs = ti.Vector.field(self.max_spring, dtype=int, shape=self.n)
 
+        # Collider info
+        if self.is_coll:
+            self.collider = ti.Struct.field({"id": int, "dist": float, "normal": mti.vec3}, shape=self.n)
+
+        # self.x.from_numpy(self.points)
         self.fill_points()
+        self.fill_collider_points()
         self.fill_velocity()
         self.fill_springs()
 
-    def initialize_fields(self):
-        self.initialize_springs()
 
     def fill_points(self):
         self.x.from_numpy(self.points)
+
+    def fill_collider_points(self):
+        self.x.from_numpy(self.collider_points)
     
     @ti.kernel
     def fill_velocity(self):
@@ -137,9 +157,32 @@ class ExplicitMassSpring(Solver):
             all_l0.append(l0_list)
         self.all_l0 = all_l0
 
+        self.r_coll = 0.9 * min([v for v_l0 in all_l0 for v in v_l0]) / 2
+
+        del[all_l0]
+
     def reset(self):
         self.fill_points()
         self.fill_velocity()
+
+    @ti.kernel
+    def find_collision(self):
+        """"
+        Use Sphere collision detection
+        """
+        print("Start find_collision")
+        for i in self.x:
+            for j in range(self.n_collider):
+                vec = self.x[i]-self.x_collider[j]
+                dist = mti.length(vec)
+                if  dist < 2*self.r_coll:
+                    self.collider[i].id = j
+                    self.collider[i].dist = dist
+                    self.collider[i].normal = vec / dist
+                else:
+                    self.collider[i].id = -1
+                print(self.collider[i].id)
+        pass
 
     @ti.kernel
     def step_forward(self):
@@ -167,12 +210,20 @@ class ExplicitMassSpring(Solver):
             v *= ti.exp(-self.air_drag * self._dt)
 
             # # Surfacic Forces (sphere collision)
-            # distance_to_sphere_center = x - ti.Vector([0.0, 0.0, 0.0])
-            # distance_to_sphere = distance_to_sphere_center.norm() - 1.0
-            # if distance_to_sphere<=0:
-            #     # Velocity projection
-            #     normal = distance_to_sphere_center.normalized()
-            #     v -= ti.min(v.dot(normal), 0) * normal
+            if self.is_coll:
+                collider_pid = self.collider[i].id
+                if collider_pid > -1:
+                    vec = x - self.x_collider[collider_pid]
+                    dist = mti.length(vec) - self.r_coll
+                    if dist <= 0:
+                        # Velocity projection
+                        # set velocity component normal to contact surface equal to 0
+                        normal = vec.normalized()
+                        v -= ti.min(v.dot(normal), 0) * normal
+                        # Add forces equivakent to collisiont
+                        # v = dist**(3/2) * normal
+                        # Or add a energy convertion term
+                        # v -= (1+0.9) * ti.min(v.dot(normal), 0) * normal
 
             x += self._dt * v / 2
 

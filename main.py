@@ -1,4 +1,4 @@
-#### Blender Import #### 
+#### Blender Import ####
 import bpy
 from bpy.app.handlers import persistent
 from bpy.utils import register_class, unregister_class
@@ -57,20 +57,31 @@ def step_forward(scene):
     print("---- Frame: ",scene.frame_current, "----")
     # Init local variables
     obj = scene.cloth_simulator.obj
+    anim_collider = None
+    anim_pin = scene.cloth_simulator.animated_pin # is a string ("Pin_Group_name" or None)
     delta_frame = scene.frame_current - scene.frame_previous
     scene.frame_previous = scene.frame_current
-
     # Init
     if cloth_sim.isnot_init:
         t_init = perf_counter()
-        cloth_sim.initialize_from_obj(scene.cloth_simulator.obj)
+        obj = scene.cloth_simulator.obj
+        collider = scene.cloth_simulator.collider
+        # anim_collider = scene.cloth_simulator.animated_collider
+        anim_collider = None
+        # id_pin = scene.cloth_simulator.pin.index
+        id_pin = None
+        id_anim_pin = scene.cloth_simulator.animated_pin.index
+        cloth_sim.initialize_from_obj(obj, collider=collider, 
+            animated_collider=anim_collider, animated_pin_group_id=id_anim_pin, 
+            pin_group_id=id_pin
+        )
         print(f" Init time:   {(perf_counter()-t_init)*1e3:.3f} ms")
 
     # Compute 1 frame
     if delta_frame == 1:
         print("step formward")
         t_forward = perf_counter()
-        cloth_sim.frame_forward()
+        cloth_sim.frame_forward(anim_collider, anim_pin)
         print(f"Forward time: {(perf_counter()-t_forward)*1e3:.3f} ms")
 
         t_update = perf_counter()
@@ -89,10 +100,10 @@ def step_forward(scene):
         print(f"Update time:  {(perf_counter()-t_update)*1e3:.3f} ms")
 
 
-class ClothPanel(bpy.types.Panel):
+class ClothBasePanel(bpy.types.Panel):
     """Creates a Panel in the Object properties window"""
-    bl_label = "Cloth Simulator"
-    bl_idname = "VIEW3D_PT_ClothSimu"
+    bl_label = "Method"
+    # bl_idname = "VIEW3D_PT_ClothSimu"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "GPU Simulation"
@@ -101,43 +112,92 @@ class ClothPanel(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         obj = context.object
+        sim_obj = context.scene.cloth_simulator.obj
         sim = context.scene.cloth_simulator
 
-        row = layout.row()
-        row.label(text="Powered by Taichi", icon='MOD_CLOTH')
-
+        layout.label(text="Select the solver", icon='MEMORY')
         if not cloth_sim:
             layout.prop(sim, "arch")
             layout.split()
             layout.prop(sim, "solver")
             layout.split()
-            layout.operator("object.init_sim_operator", text="Init Simulator", icon="ADD")
+            layout.operator("object.init_sim_operator", text="Create Simulator", icon="ADD")
         else:
             layout.label(text=f"Arch: {sim.arch}.")
             layout.label(text=f"The {sim.name} method is used")
             layout.operator("object.del_sim_operator", text="Delete Simulator", icon="PANEL_CLOSE")
+        return
+class ClothInitPanel(bpy.types.Panel):
+    """Creates a Panel in the Object properties window"""
+    bl_label = "Initialisation"
+    # bl_idname = "VIEW3D_PT_ClothSimu"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "GPU Simulation"
+    bl_context = "objectmode"
 
-        layout.label(text="Simulation parameters:")
-        layout.prop(sim, "obj")
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        obj = context.object
+        sim_obj = context.scene.cloth_simulator.obj
+        sim = context.scene.cloth_simulator
+        flow = layout
+
+        flow.label(text="Link Objects with the simulator:", icon='LINK_BLEND')
+        flow.label(text="Simulated object:")
+        col = layout.column()# align=False, heading="Simulated object")
+        col.prop(sim, "obj")
+        col.prop(sim, "fps")
+        col.prop(sim, "dt")
         layout.split()
-        layout.prop(sim, "fps")
-        layout.prop(sim, "dt")
+        flow.label(text="Colliding object:")
+        col = flow.column()
+        col.prop(sim, "collider")
+        col.prop(sim, "animated_collider")
+        col.prop(sim, "coll_freq")
+        col.prop(sim, "is_self_coll")
+        layout.split()
+        flow.label(text="Pinnded groups:")
+        # layout.prop(sim, "animated_pin")
+        col = flow.column()
+        col.prop_search(sim, "pin", sim_obj, "vertex_groups", text="Pins")
+        col.prop_search(sim, "animated_pin", sim_obj, "vertex_groups", text="Animated Pins")
+        return
+class ClothParamPanel(bpy.types.Panel):
+    """Creates a Panel in the Object properties window"""
+    bl_label = "Parameters"
+    # bl_idname = "VIEW3D_PT_ClothSimu"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "GPU Simulation"
+    bl_context = "objectmode"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        obj = context.object
+        sim_obj = context.scene.cloth_simulator.obj
+        sim = context.scene.cloth_simulator
+        flow = layout
+
         layout.split(factor=4.)
         layout.prop(sim, "mass")
         col = layout.column()
         col.prop(sim,'gravity')
         layout.split(factor=1.)
         if sim.solver=="EMS":
-            layout.prop(sim, "k")
-            layout.prop(sim, "alpha")
-            layout.prop(sim, "drag")
-            layout.split(factor=1.)
-            layout.prop(sim, "bending")
+            col = layout.column()
+            col.prop(sim, "k")
+            col.prop(sim, "k_bend")
+            col.prop(sim, "alpha")
+            col.prop(sim, "drag")
         if sim.solver=="XPBD":
+            col = layout.column()
             layout.prop(sim, "compliance")
             layout.prop(sim, "bending_compliance")
             layout.prop(sim, "stretch_relaxation")
-            layout.prop(sim, "bending_bending_compliance")
+            layout.prop(sim, "bending_compliance")
             layout.prop(sim, "stretch_relaxation")
             layout.prop(sim, "bending_relaxation")
             layout.prop(sim, "friction")
@@ -182,21 +242,32 @@ class DelSimulatorOperator(bpy.types.Operator):
         context.scene.frame_set(0)
         cloth_sim = None
         return {'FINISHED'}
-        
+
 
 def update_sim_prop(self, context):
+    # Base
     cloth_sim.arch = self.arch
     cloth_sim.fps = self.fps
     cloth_sim.dt = self.dt
+    # Common
     cloth_sim.gravity[0] = self.gravity[0]
     cloth_sim.gravity[1] = self.gravity[1]
     cloth_sim.gravity[2] = self.gravity[2]
     cloth_sim.mass = self.mass
+    # Interaction
+    cloth_sim.is_collider = self.collider
+    cloth_sim.is_anim_collider = self.animated_collider
+    cloth_sim.collider_freq = self.coll_freq
+    cloth_sim.is_pin = self.pin
+    cloth_sim.is_anim_pin = self.animated_pin
+    cloth_sim.is_self_coll = self.is_self_coll
+    # Parameters
     if isinstance(cloth_sim, ExplicitMassSpring):
         cloth_sim.spring_rigidity = self.k
+        cloth_sim.bend_rigidity = self.k_bend
         cloth_sim.spring_damping = self.alpha
         cloth_sim.air_drag = self.drag
-        cloth_sim.bending_springs = self.bending
+        cloth_sim.bending_springs = self.is_bend
     if isinstance(cloth_sim, PositionBasedDynamic):
         cloth_sim.is_bending = self.bending
         cloth_sim.compliance = self.compliance
@@ -216,30 +287,37 @@ class ClothSimulationProperty(bpy.types.PropertyGroup):
     arch:    bpy.props.EnumProperty(items=arch, name="Architecture", description="Specify the architecture and the backend that Majax simulator will use.", update=update_sim_prop)
     solver:  bpy.props.EnumProperty(items=solver_item, name="Method", description="Choose the Solver method to use to make the simulation.")
     obj:     bpy.props.PointerProperty(type=bpy.types.Object, name="Cloth mesh", description="Object which will be simulated.")
+    # Interactor
+    animated_collider: bpy.props.PointerProperty(type=bpy.types.Object, name="Animated Collider", description="Object which will act on the simulation.")
+    collider:          bpy.props.PointerProperty(type=bpy.types.Object, name="Collider", description="Object which will act on the simulation which can be animated.")
+    animated_pin:      bpy.props.StringProperty(name="Animated Pin", description="Points which aren't affected by the simulation and are update each frames")
+    pin:               bpy.props.StringProperty(name="Pin", description="Points which aren't affected by the simulation")
+    is_self_coll:      bpy.props.BoolProperty(name="Self collision", description="Enable self collision computation if checked")
     # Common to all solver parameters
-    fps:     bpy.props.IntProperty(name="FPS", default=24, update=update_sim_prop)
-    dt:      bpy.props.FloatProperty(name="Delta Time", default=0.004, precision=6, description="Time between to sub simulation step. Smaller is the step, more stable is the simuation, but also slower.", update=update_sim_prop)
-    gravity: bpy.props.FloatVectorProperty(name="Gravity", subtype='ACCELERATION', default=Vector((0,0,9.81)), description="Direction and intensity of the gravity force, apply to all points.", update=update_sim_prop)
-    mass:    bpy.props.FloatProperty(name="Mass", description="Mass totale of the object.", default=1.)
+    fps:        bpy.props.IntProperty(name="FPS", default=24, update=update_sim_prop)
+    dt:         bpy.props.FloatProperty(name="Delta Time", default=0.004, precision=6, description="Time between to sub simulation step. Smaller is the step, more stable is the simuation, but also slower.", update=update_sim_prop)
+    gravity:    bpy.props.FloatVectorProperty(name="Gravity", subtype='ACCELERATION', default=Vector((0,0,9.81)), description="Direction and intensity of the gravity force, apply to all points.", update=update_sim_prop)
+    mass:       bpy.props.FloatProperty(name="Mass", description="Mass totale of the object.", default=1.)
+    mass_field: bpy.props.StringProperty(name="Field Mass", description="Mass value for each point")
+    vel_field:  bpy.props.StringProperty(name="Field Velocity", description="Initial value of the velocity for each point")
+    friction:   bpy.props.FloatProperty(name="Friction", description="Friction of the particles when colliding. It correspond to the % energy preserved at each iteration.", update=update_sim_prop, default=0.9)
+    coll_freq:  bpy.props.FloatProperty(name="Collision frequency", description="Time spread where collision detection computation occurs. ", update=update_sim_prop, default=24)
     # Mass-spring parameters
     k:       bpy.props.FloatProperty(name="Spring rigidity", description="Rigidity of the springs. It represent the required quantity of force to move a points of 1kg to 1 meter.", update=update_sim_prop, default=1e4)
+    k_bend:  bpy.props.FloatProperty(name="Bending rigidity", description="Rigidity of the springs.", update=update_sim_prop)
+    is_bend: bpy.props.BoolProperty(name="Bending springs", description="Use or no the Bending springs", update=update_sim_prop)
     alpha:   bpy.props.FloatProperty(name="Spring damping", description="A bigger damping, limite the speed movement of the cloth", update=update_sim_prop, default=1e4)
     drag:    bpy.props.FloatProperty(name="Air drag", description="Air drag applied on the cloth. A big air drag improve the stability.", update=update_sim_prop, default=1.)
-    bending: bpy.props.BoolProperty(name="Bending springs", description="Use or no the Bending springs", update=update_sim_prop)
-    # WPBD parameters
+    # XPBD parameters
     compliance: bpy.props.FloatProperty(name="Compliance", description="Caracterize the flexibility of the constraint. A smaller value generate stiff constraint and more rigid objects dynamics", update=update_sim_prop, default=0.)
     bending_compliance: bpy.props.FloatProperty(name="Bending Compliance", description="Caracterize the flexibility of the constraint. A smaller value generate stiff constraint and more rigid objects dynamics", update=update_sim_prop, default=0.)
     stretch_relaxation: bpy.props.FloatProperty(name="Stretch Relaxation", description="divide the dX update by the relaxation coefficient. A small value impose a slower evoluiton of the system which improve the stability.", update=update_sim_prop, default=1.)
     bending_relaxation: bpy.props.FloatProperty(name="Bending Relaxation", description="divide the dX update by the relaxation coefficient. A small value impose a slower evoluiton of the system which improve the stability.", update=update_sim_prop, default=1.)
-    bending_compliance: bpy.props.FloatProperty(name="Bending Compliance", description="Caracterize the flexibility of the constraint. A smaller value generate stiff constraint and more rigid objects dynamics", update=update_sim_prop, default=0.)
-    stretch_relaxation: bpy.props.FloatProperty(name="Stretch Relaxation", description="divide the dX update by the relaxation coefficient. A small value impose a slower evoluiton of the system which improve the stability.", update=update_sim_prop, default=1.)
-    bending_relaxation: bpy.props.FloatProperty(name="Bending Relaxation", description="divide the dX update by the relaxation coefficient. A small value impose a slower evoluiton of the system which improve the stability.", update=update_sim_prop, default=1.)
-    friction:   bpy.props.FloatProperty(name="Friction", description="Friction of the particles with the ground. It correspond to the % energy preserved at each iteration.", update=update_sim_prop, default=0.9)
     ground:     bpy.props.BoolProperty(name="Ground", description="Use a ground which the object collide with.", update=update_sim_prop)
-    
-    
 
-classes = [InitSimulatorOperator, DelSimulatorOperator, ClothPanel]
+
+classes = [InitSimulatorOperator, DelSimulatorOperator, ClothBasePanel, ClothInitPanel, ClothParamPanel]
+
 
 def register():
     print("Add scene properties")
@@ -271,7 +349,6 @@ def unregister():
     del bpy.types.Scene.frame_previous
 
 
-    
 if __name__ == "__main__":
     # simulator = Simulator()
     try:

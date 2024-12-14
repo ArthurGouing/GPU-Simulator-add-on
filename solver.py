@@ -15,28 +15,83 @@ class Solver(ABC):
     """
     Description:
     -------------
+    General Abstract Class for physics solver
+
 
     Attributes:
     -------------
+    name                 : The name of the solver
+    arch                 : The architecture used by Taichi (GPU, mutli-CPU)
+    precision            : Precision of the computation (single, double)
+    dt                   : The time step of the simulation
+    mass                 : The mass (should be solver specific)
+    gravity              : The gravity values
+    friction_coeff       : The friction coefficient value
+    fps                  : The number of frame per seconds
+    substep              : The number of iteration between 2 frames
+    curr_time            : The time of the simulation
+    is_not_init          : A boolean which indicate if the solver is initialised (i.e. Meshs are read)
+
+    collider_freq        : The number of iteration where the solver look for collision 
+    is_self_coll         : Tell if the solver use self collision method
+
+    n                    : The number of verticies in the simulated object
+    n_edge               : The number of edges     in the simulated object
+    n_prim               : The number of polygons  in the simulated object
+    n_collider           : The number of verticies in the static collider object
+    n_anim_collider      : The number of verticies in the anumated collider object
+    is_coll              : Indicate if there is collider in the simulation
+    is_pin               : Indicate if there is pinned vertices in the simulation object
+
+    points               : Numby array of the verticies of the simulated object
+    pin                  : Python list of the static pinned vertices
+    animated_pin         : Python list of the animated pinned vertices
+    neighbor_point       : python list of the list of neibhot for each vertices (size=n, n_neighb)
+    collider_points      : Numpy array of the verticies of the static collider object
+    anim_collider_points : Numpy array of the verticies of the animated collider object
+
+    x                    : Taichi array that represent the vertices position
+    v                    : Taichi array that represent the vertices velocity
+    x_collider           : Taichi array that represent the collider vertices position
+
 
     Methods:
     -------------
+    initialize_from_obj    (...)
+    frame_forward          (...)
+    udpate_vertices        (...)
+    udpate_collider_points (...)
+    udpate_pin_position    (...)
+
+
+    Abstract Methods:
+    -------------
+    get_field_size          (...)
+    init_other_fields       (...)
+    create_other_gpu_fields (...)
+    step_forward            (...)
+    find_collision          (...)
+    reset                   (...)
     """
 
     def __init__(self, arch) -> None:
         # Architecture Computation
         self.name = "Undefined Solver"
         self.arch = arch # ti.vulkan if ti._lib.core.with_vulkan() else ti.cuda
+        self.precision = np.single
 
         # Simulation Parameters 
         self._dt = 0.04
         self._fps = 24
         self._substeps = int(1 / self._fps // self._dt)
         self.curr_time =  0
+        self.collider_freq = self._substeps
+        self.is_self_coll = False
 
         self.mass = 1.
         self._mass = 1.
         self.gravity = ti.Vector([0, 0, -9.81])
+        self.friction_coeff = 0.70
 
         self.isnot_init = True
 
@@ -102,17 +157,45 @@ class Solver(ABC):
         print(f" {'mass':<10}: {self.mass}")
         print(f" {'gravity':<10}: {self.gravity}")
 
-    def initialize_from_obj(self, obj: bpy.types.Object):
+    def initialize_from_obj(self, 
+            obj: bpy.types.Object, 
+            collider: bpy.types.Object=None, 
+            animated_collider: bpy.types.Object=None, 
+            pin_group_id: int=None, 
+            animated_pin_group_id: int=None
+        ):
+        """
+        Read the Bpy object for the simulated object, the collider, and the pin group.
+        And store all the data in np.array, then send the data to the GPU.
+        """
         # Get Object sizes
         self.n      = len(obj.data.vertices)
         self.n_edge = len(obj.data.edges) # sum([len(e) for e in obj.data.edges], 0)
         self.n_prim = len(obj.data.polygons) # (self.n - 1) * (self.n - 1) * 2
+        self.n_collider      = len(collider.data.vertices) if collider else 0
+        self.n_anim_collider = len(collider.data.vertices) if animated_collider else 0
+        if collider or animated_collider:
+            self.is_coll = True
+        else:
+            self.is_coll = False # inutile, car déjà mis à False dans l'init
+        self.is_pin = False
+        self.get_field_size()
 
         # Get points a list of list (uneven list size)
+        # Get pin and animated_pin index
         points = list()
+        animated_pin = list()
+        pin = list()
         for v in obj.data.vertices:
             points.append([v.co.x, v.co.y, v.co.z])
-        self.points = np.array(points, dtype=np.single)
+            for g in v.groups:
+                if g==animated_pin_group_id:
+                    animated_pin.append(v.index)
+                elif g==pin_group_id:
+                    pin.append(v.index)
+        self.points = np.array(points, dtype=self.precision)
+        self.pin = pin
+        self.animated_pin = animated_pin
         del[points]
 
         # Get edges as numpy
@@ -126,24 +209,54 @@ class Solver(ABC):
             neighbor_point[p_id1].append(p_id2)
         self.neighbor_point = neighbor_point
 
-        # Get primitives as numpy (either face or tetrahedron)
-        # ...
-        # ...
+        # Get collider points
+        if collider:
+            collider_points = list()
+            for v in collider.data.vertices:
+                collider_points.append([v.co.x, v.co.y, v.co.z])
+            self.collider_points      = np.array(collider_points, dtype=self.precision)
+            del[collider_points]
+        else:
+            self.collider_points = None
+        if animated_collider:
+            anim_collider_points = list()
+            for v in animated_collider.data.vertices:
+                anim_collider_points.append([v.co.x, v.co.y, v.co.z])
+            self.anim_collider_points = np.array(anim_collider_points, dtype=self.precision)
+            del[anim_collider_points]
+        else:
+            self.anim_collider_points = None
 
-        # Init CPU fields
-        # self.initialize_fields()
+        # Other field initialisation for daughter class
+        self.init_other_field(obj)
+
         
         # Send to GPU fields
         ti.init(self._arch)
         self.x = ti.Vector.field(3, dtype=float, shape=self.n)
-        self.create_fields()
+        self.v = ti.Vector.field(3, dtype=float, shape=self.n)
+
+        if self.is_coll:
+            self.x_collider = ti.Vector.field(3, dtype=float, shape=self.n_collider) # need to add anim_collider to this x_collider Taichi array
+
+        # self.x_pin = ti.Vector.field(3, dtype=self.precision, shape=self.n_anim_pin)
+        # self.id_pin = ti.field(int, shape=self.n_anim_pin+self.n_pin)
+
+        # Other field GPU send for daughter class
+        self.create_other_gpu_fields()
 
         self.isnot_init = False
         self.print_mesh_parameter()
         pass
 
     @abstractmethod
-    def create_fields(self):
+    def get_field_size(self):
+        pass
+    @abstractmethod
+    def init_other_field(self, obj:bpy.types.Object):
+        pass
+    @abstractmethod
+    def create_other_gpu_fields(self):
         pass
 
     def print_mesh_parameter(self):
@@ -165,14 +278,47 @@ class Solver(ABC):
     @abstractmethod
     def reset(self):
         pass
+        # curr_time = 0
         # self.initialize_point()
         # self.initialize_velocity()
 
-    def frame_forward(self):
+    def frame_forward(self, animated_collider: bpy.types.Object, pin: np.array):
+        # Update interaction points
+        if animated_collider:
+            self.update_collider_points(animated_collider) # à optimiser à la manière de self.update_vertices
+        if self.is_pin:
+            self.update_pin_position(pin)
+
         for t in range(self._substeps):
+            if self.is_coll and t%self.collider_freq==0:
+                self.find_collision()
+
             self.step_forward()# self.gravity[0], self.gravity[1], self.gravity[2])
-            self.curr_time += t
+            self.curr_time += 1
+
+    def update_collider_points(self, collider:bpy.types.Object):
+        import array
+        vert = collider.data.vertices
+        points_array = self.anim_collider_points# self.x.to_numpy().ravel().tolist()
+        seq = array.array('f', points_array)
+        vert.foreach_get('co', seq)
+        self.x_collider.from_numpy(self.anim_collider_points)
+
+    def update_pin_position(self, pin_points: np.array):
+        self.x_pin.from_numpy(pin_points)
+        self.fill_pin()
+        self.kernel_up_pin()
+
+    @ti.kernel
+    def kernel_up_pin(self):
+        for i in self.x_pin:
+            id = self.pin_id[i]
+            self.x[id] = self.x_pin[i]
 
     @abstractmethod
     def step_forward():
+        pass
+
+    @abstractmethod
+    def find_collision():
         pass
