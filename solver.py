@@ -85,7 +85,7 @@ class Solver(ABC):
         self._fps = 24
         self._substeps = int(1 / self._fps // self._dt)
         self.curr_time =  0
-        self.collider_freq = self._substeps
+        self.collider_freq = 10 # self._substeps
         self.is_self_coll = False
 
         self.mass = 1.
@@ -168,20 +168,25 @@ class Solver(ABC):
         Read the Bpy object for the simulated object, the collider, and the pin group.
         And store all the data in np.array, then send the data to the GPU.
         """
-        # Get Object sizes
+        # Get Objects size
         self.n      = len(obj.data.vertices)
         self.n_edge = len(obj.data.edges) # sum([len(e) for e in obj.data.edges], 0)
         self.n_prim = len(obj.data.polygons) # (self.n - 1) * (self.n - 1) * 2
         self.n_collider      = len(collider.data.vertices) if collider else 0
-        self.n_anim_collider = len(collider.data.vertices) if animated_collider else 0
+        self.n_anim_collider = len(animated_collider.data.vertices) if animated_collider else 0
         if collider or animated_collider:
             self.is_coll = True
         else:
             self.is_coll = False # inutile, car déjà mis à False dans l'init
         self.is_pin = False
         self.get_field_size()
+        # Should be doing self.get_field_size 
+        # and in the daugther class :
+        # super.get_field_size(...)
+        # self.get_field_size(...)
+        # TODO rewrite
 
-        # Get points a list of list (uneven list size)
+        # Get points
         # Get pin and animated_pin index
         points = list()
         animated_pin = list()
@@ -194,11 +199,13 @@ class Solver(ABC):
                 elif g==pin_group_id:
                     pin.append(v.index)
         self.points = np.array(points, dtype=self.precision)
-        self.pin = pin
-        self.animated_pin = animated_pin
+        self.pin = pin # np.array(pin, dtype=self.precision)
+        self.animated_pin = animated_pin # np.array(animated_pin, dtype=self.precision)
         del[points]
+        del[pin]
+        del[animated_pin]
 
-        # Get edges as numpy
+        # Get edges as numpy array
         neighbor_point = list()
         for i in range(self.n):
             neighbor_point.append(list())
@@ -208,6 +215,7 @@ class Solver(ABC):
             neighbor_point[p_id2].append(p_id1)
             neighbor_point[p_id1].append(p_id2)
         self.neighbor_point = neighbor_point
+        del neighbor_point
 
         # Get collider points
         if collider:
@@ -218,6 +226,8 @@ class Solver(ABC):
             del[collider_points]
         else:
             self.collider_points = None
+
+        # Get animated collider points
         if animated_collider:
             anim_collider_points = list()
             for v in animated_collider.data.vertices:
@@ -285,16 +295,21 @@ class Solver(ABC):
     def frame_forward(self, animated_collider: bpy.types.Object, pin: np.array):
         # Update interaction points
         if animated_collider:
+            print("update collider")
             self.update_collider_points(animated_collider) # à optimiser à la manière de self.update_vertices
-        if self.is_pin:
+        if self.is_pin: # TODO replace by animated_pin
+            print("udpate pin")
             self.update_pin_position(pin)
 
         for t in range(self._substeps):
-            if self.is_coll and t%self.collider_freq==0:
+            if self.is_coll and t%20==0:
+                print("find_collisision", self.collider_freq, self.curr_time%self.collider_freq)
                 self.find_collision()
 
+            print("stepforward 2")
             self.step_forward()# self.gravity[0], self.gravity[1], self.gravity[2])
             self.curr_time += 1
+        print(f" {'Rcollision':<10}: {self.r_coll}")
 
     def update_collider_points(self, collider:bpy.types.Object):
         import array

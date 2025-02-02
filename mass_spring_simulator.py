@@ -207,20 +207,24 @@ class ExplicitMassSpringSimulator(Solver):
         self.l0.from_numpy(np.array(all_l0))
 
     def reset(self):
+        print("reset")
         self.x.from_numpy(self.points)
         self.initialize_velocity()
 
     def update_vertices(self, obj: bpy.types.Object):
+        print("update_vertices")
         import array
         vert = obj.data.vertices
         points_array = self.x.to_numpy().ravel().tolist()
         seq = array.array('f', points_array)
         vert.foreach_set('co', seq)
         obj.data.update()
-    def frame_forward(self):
-        for t in range(self._substeps):
-            self.step_forward()# self.gravity[0], self.gravity[1], self.gravity[2])
-            self.curr_time += t
+
+    # def frame_forward(self):
+    #     print("frame forward")
+    #     for t in range(self._substeps):
+    #         self.step_forward()# self.gravity[0], self.gravity[1], self.gravity[2])
+    #         self.curr_time += t
 
     @ti.kernel
     def step_forward(self): # self, gx: float, gy: float, gz:float): # gravity: ti.types.vector()):

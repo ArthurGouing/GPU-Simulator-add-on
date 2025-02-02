@@ -4,7 +4,9 @@ import taichi.math as mti
 import numpy as np
 from math import acos
 
-from solver import Solver
+# from solver import Solver
+# from . import solver.Solver as Solver
+from .solver import Solver
 
 
 @ti.data_oriented

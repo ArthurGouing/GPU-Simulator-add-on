@@ -3,7 +3,8 @@ import taichi as ti
 import taichi.math as mti
 import numpy as np
 
-from solver import Solver
+# from .solver import Solver
+from . import solver.Solver as Solver
 
 @ti.data_oriented
 class ExplicitMassSpring(Solver):
@@ -110,7 +111,7 @@ class ExplicitMassSpring(Solver):
         self.x.from_numpy(self.points)
 
     def fill_collider_points(self):
-        self.x.from_numpy(self.collider_points)
+        self.x_collider.from_numpy(self.collider_points)
     
     @ti.kernel
     def fill_velocity(self):
@@ -158,6 +159,8 @@ class ExplicitMassSpring(Solver):
         self.all_l0 = all_l0
 
         self.r_coll = 0.9 * min([v for v_l0 in all_l0 for v in v_l0]) / 2
+        print("rcoll:", self.r_coll)
+        self.r_coll = 0.1
 
         del[all_l0]
 
@@ -170,18 +173,25 @@ class ExplicitMassSpring(Solver):
         """"
         Use Sphere collision detection
         """
-        print("Start find_collision")
+        min_dist = 10000. # TODO set to inf
+        min_id = 0
+        min_vec = mti.vec3(0)
         for i in self.x:
             for j in range(self.n_collider):
+                # print(j)
                 vec = self.x[i]-self.x_collider[j]
                 dist = mti.length(vec)
-                if  dist < 2*self.r_coll:
-                    self.collider[i].id = j
-                    self.collider[i].dist = dist
-                    self.collider[i].normal = vec / dist
-                else:
-                    self.collider[i].id = -1
-                print(self.collider[i].id)
+                if  dist < min_dist:
+                    min_dist = dist
+                    min_id = j
+                    min_vec = vec
+            # Store minimum distance
+            if min_dist < 2*self.r_coll:
+                self.collider[i].id = min_id
+                self.collider[i].dist = min_dist
+                self.collider[i].normal = min_vec / min_dist
+            else:
+                self.collider[i].id = -1
         pass
 
     @ti.kernel
@@ -219,11 +229,14 @@ class ExplicitMassSpring(Solver):
                         # Velocity projection
                         # set velocity component normal to contact surface equal to 0
                         normal = vec.normalized()
-                        v -= ti.min(v.dot(normal), 0) * normal
+                        u1   = mti.cross(normal, v).normalized()
+                        proj = mti.cross(normal, u1)
+                        # v += ti.min(proj.dot(normal), 0) * proj
                         # Add forces equivakent to collisiont
-                        # v = dist**(3/2) * normal
-                        # Or add a energy convertion term
-                        # v -= (1+0.9) * ti.min(v.dot(normal), 0) * normal
+                        new_v = -(1+0.0) * ti.min(v.dot(normal), 0) * normal
+                        if new_v.dot(v) < 0:
+                            v = ti.min(proj.dot(normal), 0) * proj
+                            # v += new_v
 
             x += self._dt * v / 2
 
@@ -234,5 +247,6 @@ class ExplicitMassSpring(Solver):
                 v.x =  ti.sqrt(self.friction_coeff) * v.x
                 v.y =  ti.sqrt(self.friction_coeff) * v.y
                 v.z = -ti.sqrt(self.friction_coeff) * v.z
-            self.x[i] = x
-            self.v[i] = v
+            if (i!=0 and i!=1):
+                self.x[i] = x
+                self.v[i] = v

@@ -1,34 +1,47 @@
 #### Blender Import ####
+print("Start init")
 import bpy
-from bpy.app.handlers import persistent
+from bpy.app.handlers import persistent # To keep handlers on new file opening
 from bpy.utils import register_class, unregister_class
 from mathutils import Vector
 
-### Library Import ####
+### Local Library Import ####
+print("import local lib")
 import sys, os
 from time import perf_counter
 
-dir = os.path.dirname(bpy.data.filepath)
+# If script debug :
+# dir = os.path.dirname(bpy.data.filepath)
+# 
+# print(dir, bpy.data.filepath)
+# print(sys.path)
+# Else publish extension:
+extension_directory = bpy.utils.extension_path_user(__package__, path="", create=True)
+print("dir:", extension_directory)
+# if not extension_directory in sys.path:
+#     sys.path.append(extension_directory)
 
-if not dir in sys.path:
-    sys.path.append(dir)
-print(dir, bpy.data.filepath)
-print(sys.path)
 
 ### Local Import ###
-import solver
-import exp_mass_spring
-import xpbd
+from . import solver
+from . import exp_mass_spring
+from . import xpbd
 
 # this next part forces a reload in case you edit the source after you first start the blender session
-import imp
-imp.reload(solver)
-imp.reload(exp_mass_spring)
-imp.reload(xpbd)
+# If script debug:
+# import imp
+# imp.reload(solver)
+# imp.reload(exp_mass_spring)
+# imp.reload(xpbd)
 
-from exp_mass_spring import ExplicitMassSpring
-from xpbd import PositionBasedDynamic
+from .exp_mass_spring import ExplicitMassSpring
+from .xpbd import PositionBasedDynamic
 
+print("import taichi")
+import taichi
+print("end import")
+
+# Global variable which contoain the simulator Object
 cloth_sim = None
 
 solver_item = [
@@ -50,21 +63,21 @@ def step_forward(scene):
     Rules of computation according to frame change:
      - if we go to the next frame:     Compute one Simulation loop
      - if we go to the previous frame: Do nothing
-     - if we jump to a father frame:   Reset the computation
-     - if we compile and go to the next step: the computation is'nt init --> Faire l'init dans la compile ?
+     - if we jump to a further previous frame:   Reset the computation
+     - if we compile and go to the next step: Reset the computation (the computation is'nt init --> Faire l'init dans la compile ?)
     """
     print("")
     print("---- Frame: ",scene.frame_current, "----")
     # Init local variables
     obj = scene.cloth_simulator.obj
-    anim_collider = None
+    anim_collider = None # scene.cloth_simulator.animated_collider # TODO
     anim_pin = scene.cloth_simulator.animated_pin # is a string ("Pin_Group_name" or None)
     delta_frame = scene.frame_current - scene.frame_previous
     scene.frame_previous = scene.frame_current
     # Init
     if cloth_sim.isnot_init:
         t_init = perf_counter()
-        obj = scene.cloth_simulator.obj
+        obj = scene.cloth_simulator.obj # Useless
         collider = scene.cloth_simulator.collider
         # anim_collider = scene.cloth_simulator.animated_collider
         anim_collider = None
@@ -85,7 +98,7 @@ def step_forward(scene):
         print(f"Forward time: {(perf_counter()-t_forward)*1e3:.3f} ms")
 
         t_update = perf_counter()
-        cloth_sim.update_vertices(obj)
+        cloth_sim.update_vertices(obj) # cloth_sim.update_objects ou juste update # TODO:rename
         print(f"Update time:  {(perf_counter()-t_update)*1e3:.3f} ms")
 
     # Reset Computation
@@ -96,12 +109,12 @@ def step_forward(scene):
         cloth_sim.reset()
         print(f"Reset time:   {(perf_counter()-t_reset)*1e3:.3f} ms")
         t_update = perf_counter()
-        cloth_sim.update_vertices(obj)
+        cloth_sim.update_vertices(obj) # Idem
         print(f"Update time:  {(perf_counter()-t_update)*1e3:.3f} ms")
 
 
 class ClothBasePanel(bpy.types.Panel):
-    """Creates a Panel in the Object properties window"""
+    """Creates a Panel Allowing to specify all the parameters related to the Cloth simulatioon in the Object properties window"""
     bl_label = "Method"
     # bl_idname = "VIEW3D_PT_ClothSimu"
     bl_space_type = 'VIEW_3D'
@@ -207,7 +220,7 @@ class ClothParamPanel(bpy.types.Panel):
         return
 
 class InitSimulatorOperator(bpy.types.Operator):
-    """Tooltip"""
+    """Operator which initialize the Cloth_sim Object from the simulator class"""
     bl_idname = "object.init_sim_operator"
     bl_label = "Init Simulator Operator"
 
@@ -243,7 +256,7 @@ class DelSimulatorOperator(bpy.types.Operator):
         cloth_sim = None
         return {'FINISHED'}
 
-
+# TODO move to the InitSimulatorOperator class
 def update_sim_prop(self, context):
     # Base
     cloth_sim.arch = self.arch
@@ -350,7 +363,6 @@ def unregister():
 
 
 if __name__ == "__main__":
-    # simulator = Simulator()
     try:
         unregister()
     except:
